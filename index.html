@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Spatial redistribution of fast-charging demand</title>
+  <!-- Leaflet 样式 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    .controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 8px 12px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      font-size: 12px;
+    }
+    .controls label {
+      margin-right: 4px;
+    }
+    .controls select {
+      margin-right: 8px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+<div class="controls">
+  <label for="scenario-select">情景:</label>
+  <select id="scenario-select"></select>
+
+  <label for="zone-filter">区域:</label>
+  <select id="zone-filter">
+    <option value="all">全市</option>
+  </select>
+</div>
+
+<div id="map"></div>
+
+<!-- Leaflet 脚本 -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  // 初始化地图（中心先给一个大致的北京坐标，后面会用数据 fitBounds）
+  const map = L.map('map').setView([39.9, 116.4], 11);
+
+  // 底图：OpenStreetMap（线上展示足够用了）
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // 全局变量
+  let stationData = [];
+  let markersLayer = L.layerGroup().addTo(map);
+  let scenarioKeys = [];
+  let zones = new Set();
+
+  // 根据概率计算气泡半径（可根据实际分布再调整）
+  function radiusFromProb(p) {
+    const prob = parseFloat(p);
+    if (!prob || prob <= 0) return 0;
+    // p 大概在 1e-4 到 1e-3 左右，用 sqrt 缩放，让大小差别更温和
+    return 5 + 600 * Math.sqrt(prob);
+  }
+
+  // 根据情景返回颜色：Baseline 一种，其他政策另一种
+  function colorFromScenario(s) {
+    if (s === 'Baseline') {
+      return '#1f77b4';  // 蓝色
+    }
+    return '#e6550d';    // 橙色（政策情景）
+  }
+
+  // 更新地图上的气泡
+  function updateMarkers() {
+    const scenario = document.getElementById('scenario-select').value;
+    const selectedZone = document.getElementById('zone-filter').value;
+
+    markersLayer.clearLayers();
+
+    stationData.forEach(d => {
+      // 区域过滤
+      if (selectedZone !== 'all' && d.area_name !== selectedZone) {
+        return;
+      }
+
+      const p = parseFloat(d[scenario]);  // 注意：scenario 可能是 "Policy 1.1" 这种带空格和点的键，只能用 [] 访问
+      if (!p || p <= 0) return;
+
+      const lat = parseFloat(d.lat);
+      const lon = parseFloat(d.lon);
+      if (isNaN(lat) || isNaN(lon)) return;
+
+      const r = radiusFromProb(p);
+      const color = colorFromScenario(scenario);
+
+      const marker = L.circleMarker([lat, lon], {
+        radius: r,
+        weight: 0.5,
+        color: '#222',
+        fillColor: color,
+        fillOpacity: 0.7
+      });
+
+      const sharePct = (p * 100).toFixed(3);
+
+      marker.bindPopup(
+        `<b>站点: ${d.station_id}</b><br/>
+         区域: ${d.area_name || 'N/A'}<br/>
+         类型: ${d.charge_type || 'N/A'}<br/>
+         情景: ${scenario}<br/>
+         选择概率份额: ${sharePct}%`
+      );
+
+      markersLayer.addLayer(marker);
+    });
+  }
+
+  // 读取数据并初始化控件
+  fetch('data/station_probs.json')
+    .then(resp => resp.json())
+    .then(data => {
+      stationData = data;
+
+      if (!stationData || stationData.length === 0) {
+        console.error('station_probs.json 为空或格式不正确');
+        return;
+      }
+
+      // 从第一行推断字段名
+      const first = stationData[0];
+      const allKeys = Object.keys(first);
+
+      // 基本字段（后续过滤时保留），其余视为不同情景
+      const baseKeys = ['station_id', 'lon', 'lat', 'charge_type', 'area_name', 'reg_category'];
+
+      scenarioKeys = allKeys.filter(k => !baseKeys.includes(k));
+
+      // 初始化情景下拉框
+      const scenarioSelect = document.getElementById('scenario-select');
+      scenarioKeys.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;  // 保留你在 CSV/JSON 中用的情景名称，如 "Policy 1.1"
+        scenarioSelect.appendChild(opt);
+      });
+
+      // 初始化区域下拉框
+      const zoneSelect = document.getElementById('zone-filter');
+      stationData.forEach(d => {
+        if (d.area_name) {
+          zones.add(d.area_name);
+        }
+      });
+      Array.from(zones).sort().forEach(z => {
+        const opt = document.createElement('option');
+        opt.value = z;
+        opt.textContent = z;
+        zoneSelect.appendChild(opt);
+      });
+
+      // 根据所有站点坐标自动缩放视图
+      const latlngs = stationData
+        .map(d => [parseFloat(d.lat), parseFloat(d.lon)])
+        .filter(v => !isNaN(v[0]) && !isNaN(v[1]));
+      if (latlngs.length > 0) {
+        const bounds = L.latLngBounds(latlngs);
+        map.fitBounds(bounds, { padding: [20, 20] });
+      }
+
+      // 绑定事件
+      scenarioSelect.addEventListener('change', updateMarkers);
+      zoneSelect.addEventListener('change', updateMarkers);
+
+      // 初始渲染
+      updateMarkers();
+    })
+    .catch(err => {
+      console.error('加载 data/station_probs.json 失败:', err);
+    });
+</script>
+</body>
+</html>
