@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <title>Spatial redistribution of fast-charging demand</title>
-  <!-- Leaflet 样式 -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
   <style>
     html, body {
@@ -15,95 +14,283 @@
     #map {
       width: 100%;
       height: 100%;
+      background: #e5e5e5; /* 整体背景 */
     }
     .controls {
       position: absolute;
       top: 10px;
-      left: 10px;
+      right: 10px;   /* 右上角 */
+      left: auto;
       z-index: 1000;
       background: rgba(255, 255, 255, 0.92);
       padding: 8px 12px;
       border-radius: 6px;
       box-shadow: 0 1px 4px rgba(0,0,0,0.25);
       font-size: 12px;
+      max-width: 280px;
     }
-    .controls label {
+    .controls-row {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 4px;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .controls label,
+    .controls .controls-label {
       margin-right: 4px;
+      white-space: nowrap;
+      font-weight: 500;
     }
     .controls select {
       margin-right: 8px;
       font-size: 12px;
     }
+    .controls .hint {
+      font-size: 10px;
+      color: #555;
+      margin-top: 2px;
+    }
+
+    /* Policy 按钮样式 */
+    .policy-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      max-width: 220px;
+    }
+    .policy-button {
+      border: 1px solid #ccc;
+      border-radius: 12px;
+      padding: 2px 6px;
+      font-size: 11px;
+      background: #f5f5f5;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .policy-button:hover {
+      background: #e9e9e9;
+    }
+    .policy-button.active {
+      border-color: #1f77b4;
+      background: #e1edf7;
+      color: #174a7a;
+      font-weight: 600;
+    }
+
+    /* 图例样式 */
+    .legend {
+      position: absolute;
+      bottom: 15px;
+      right: 15px;
+      z-index: 1000;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 8px 10px;
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .legend-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 2px;
+    }
+    .legend-color {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      border: 1px solid #222;
+    }
+    .legend-baseline {
+      background: #1f77b4;
+    }
+    .legend-policy {
+      background: #e6550d;
+    }
+    .legend-note {
+      margin-top: 2px;
+      font-size: 10px;
+      color: #555;
+    }
   </style>
 </head>
 <body>
 <div class="controls">
-  <label for="scenario-select">情景:</label>
-  <select id="scenario-select"></select>
-
-  <label for="zone-filter">区域:</label>
-  <select id="zone-filter">
-    <option value="all">全市</option>
-  </select>
+  <div class="controls-row">
+    <span class="controls-label">Policy:</span>
+    <div id="policy-buttons" class="policy-buttons"></div>
+  </div>
+  <div class="controls-row">
+    <label for="zone-filter">District:</label>
+    <!-- 多选，下方 JS 中会处理 "all" 的逻辑 -->
+    <select id="zone-filter" multiple size="6">
+      <option value="all" selected>Citywide (all districts)</option>
+    </select>
+  </div>
+  <div class="hint">
+    Hold Ctrl (Cmd) to select multiple districts.
+  </div>
 </div>
 
 <div id="map"></div>
 
-<!-- Leaflet 脚本 -->
+<!-- 图例 -->
+<div id="legend" class="legend">
+  <div class="legend-title">Station-choice probability</div>
+  <div class="legend-row">
+    <span class="legend-color legend-baseline"></span> Baseline
+  </div>
+  <div class="legend-row">
+    <span class="legend-color legend-policy"></span> Policy scenarios
+  </div>
+  <div class="legend-row legend-note">
+    Bubble size is scaled by station-choice probability
+  </div>
+</div>
+
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 <script>
-  // 初始化地图（中心先给一个大致的北京坐标，后面会用数据 fitBounds）
-  const map = L.map('map').setView([39.9, 116.4], 11);
+  // ===== 地图初始化 =====
+  const map = L.map('map', {
+    center: [39.9, 116.4],
+    zoom: 11,
+    zoomControl: true
+  });
 
-  // 底图：OpenStreetMap（线上展示足够用了）
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  // ===== 底图（北京市行政区 polygon）相关变量 =====
+  let beijingLayer = null;
+  let cityBounds = null;              // 全市边界
+  let areaBoundsMap = {};             // 各区边界：{ area_name: LatLngBounds }
+  let areaLayerMap = {};              // 各区对应的 polygon 图层：{ area_name: [layer1, ...] }
 
-  // 全局变量
+  // ===== 业务数据变量 =====
   let stationData = [];
   let markersLayer = L.layerGroup().addTo(map);
   let scenarioKeys = [];
   let zones = new Set();
+  let currentScenario = null;         // 当前选中的 policy key
 
-  // 根据概率计算气泡半径（可根据实际分布再调整）
-  function radiusFromProb(p) {
+  // Policy key → 展示名称 映射
+  const scenarioLabelMap = {
+    'Baseline': 'Baseline',
+    'Policy 1.1': 'Policy 1 (tax popular, low)',
+    'Policy 1.2': 'Policy 1 (tax popular, high)',
+    'Policy 2.1': 'Policy 2 (subsidize unpopular, low)',
+    'Policy 2.2': 'Policy 2 (subsidize unpopular, high)',
+    'Policy 3': 'Policy 3 (gradient by quintiles)',
+    'Policy 4': 'Policy 4 (proportional adjustment)'
+  };
+
+  // ===== 半径与颜色逻辑 =====
+  function baseRadiusFromProb(p) {
     const prob = parseFloat(p);
     if (!prob || prob <= 0) return 0;
-    // p 大概在 1e-4 到 1e-3 左右，用 sqrt 缩放，让大小差别更温和
-    return 5 + 600 * Math.sqrt(prob);
+    return 3 + 300 * Math.sqrt(prob);
   }
 
-  // 根据情景返回颜色：Baseline 一种，其他政策另一种
+  function radiusFromProb(p, zoom) {
+    const base = baseRadiusFromProb(p);
+    if (base === 0) return 0;
+
+    const refZoom = 11;
+    const k = 1.15;
+    const delta = zoom - refZoom;
+    const zoomFactor = Math.pow(k, delta);
+
+    const r = base * zoomFactor;
+    return Math.max(2, Math.min(40, r));
+  }
+
   function colorFromScenario(s) {
     if (s === 'Baseline') {
       return '#1f77b4';  // 蓝色
     }
-    return '#e6550d';    // 橙色（政策情景）
+    return '#e6550d';    // 橙色（所有政策情景）
   }
 
-  // 更新地图上的气泡
-  function updateMarkers() {
-    const scenario = document.getElementById('scenario-select').value;
-    const selectedZone = document.getElementById('zone-filter').value;
+  // ===== 行政区样式控制（高亮选中区域） =====
+  function setAreaStyleDefault() {
+    if (!beijingLayer) return;
+    beijingLayer.eachLayer(layer => {
+      layer.setStyle({
+        color: '#666',        // 默认边线颜色
+        weight: 1,            // 统一线宽
+        fillColor: '#f2f2f2', // 默认填充
+        fillOpacity: 1.0
+      });
+    });
+  }
+
+  function highlightAreas(zoneList) {
+    // 先全部恢复默认样式
+    setAreaStyleDefault();
+    if (!zoneList || zoneList.length === 0) return;
+
+    zoneList.forEach(name => {
+      const layers = areaLayerMap[name];
+      if (!layers) return;
+      layers.forEach(layer => {
+        layer.setStyle({
+          // 保持与默认相同的线宽，只调颜色和填充
+          color: '#333',        // 边线颜色略深一点
+          weight: 1,            // 线宽不变，避免厚度不一致
+          fillColor: '#e0ecf4', // 高亮填充色
+          fillOpacity: 1.0
+        });
+      });
+    });
+  }
+
+  // 读取当前多选下拉框中选中的区域列表
+  function getSelectedZones() {
+    const zoneSelect = document.getElementById('zone-filter');
+    const selected = Array.from(zoneSelect.selectedOptions).map(o => o.value);
+
+    // 若未选或包含 "all"，统一视为全市
+    if (selected.length === 0 || selected.includes('all')) {
+      return ['all'];
+    }
+    return selected;
+  }
+
+  // ===== 绘制气泡，并根据需要决定是否调整视野 =====
+  function updateMarkers(fitToBounds = false) {
+    if (!currentScenario) return;
+
+    const scenario = currentScenario;
+    const selectedZones = getSelectedZones();
+
+    // 高亮行政区
+    if (selectedZones.includes('all')) {
+      setAreaStyleDefault();
+    } else {
+      highlightAreas(selectedZones);
+    }
 
     markersLayer.clearLayers();
+    const zoom = map.getZoom();
 
     stationData.forEach(d => {
-      // 区域过滤
-      if (selectedZone !== 'all' && d.area_name !== selectedZone) {
+      // 区域过滤：多选
+      if (!selectedZones.includes('all') && !selectedZones.includes(d.area_name)) {
         return;
       }
 
-      const p = parseFloat(d[scenario]);  // 注意：scenario 可能是 "Policy 1.1" 这种带空格和点的键，只能用 [] 访问
+      const p = parseFloat(d[scenario]);
       if (!p || p <= 0) return;
 
       const lat = parseFloat(d.lat);
       const lon = parseFloat(d.lon);
       if (isNaN(lat) || isNaN(lon)) return;
 
-      const r = radiusFromProb(p);
+      const r = radiusFromProb(p, zoom);
       const color = colorFromScenario(scenario);
 
       const marker = L.circleMarker([lat, lon], {
@@ -111,53 +298,136 @@
         weight: 0.5,
         color: '#222',
         fillColor: color,
-        fillOpacity: 0.7
+        fillOpacity: 0.75
       });
 
       const sharePct = (p * 100).toFixed(3);
+      const popupHtml =
+        `<b>Station id: ${d.station_id}</b><br/>
+         District: ${d.area_name || 'N/A'}<br/>
+         Share of station-choice probability: ${sharePct}%`;
 
-      marker.bindPopup(
-        `<b>站点: ${d.station_id}</b><br/>
-         区域: ${d.area_name || 'N/A'}<br/>
-         类型: ${d.charge_type || 'N/A'}<br/>
-         情景: ${scenario}<br/>
-         选择概率份额: ${sharePct}%`
+      // 悬停显示简短 tooltip
+      marker.bindTooltip(
+        `${d.station_id || 'N/A'}: ${sharePct}%`,
+        { direction: 'top', offset: [0, -2], opacity: 0.9 }
       );
+
+      // 点击弹窗
+      marker.bindPopup(popupHtml);
 
       markersLayer.addLayer(marker);
     });
+
+    // 视野调整：按行政区 polygon 的 bounds
+    if (fitToBounds) {
+      if (selectedZones.includes('all')) {
+        if (cityBounds) {
+          map.fitBounds(cityBounds, { padding: [30, 30] });
+        }
+      } else {
+        // 合并多个行政区的 bounds
+        let combined = null;
+        selectedZones.forEach(name => {
+          const b = areaBoundsMap[name];
+          if (!b) return;
+          if (!combined) {
+            combined = L.latLngBounds(b.getSouthWest(), b.getNorthEast());
+          } else {
+            combined.extend(b);
+          }
+        });
+        if (combined) {
+          map.fitBounds(combined, { padding: [30, 30] });
+        } else if (cityBounds) {
+          map.fitBounds(cityBounds, { padding: [30, 30] });
+        }
+      }
+    }
   }
 
-  // 读取数据并初始化控件
-  fetch('data/station_probs.json')
-    .then(resp => resp.json())
-    .then(data => {
-      stationData = data;
+  // ===== 同时加载北京市边界 + 站点数据 =====
+  Promise.all([
+    fetch('data/beijing.geojson').then(r => r.json()),
+    fetch('data/station_probs.json').then(r => r.json())
+  ])
+    .then(([beijingGeojson, stationJson]) => {
+      // 1) 绘制北京市边界 polygon，并记录各区 bounds + 图层
+      beijingLayer = L.geoJSON(beijingGeojson, {
+        style: feature => ({
+          color: '#666',
+          weight: 1,
+          fillColor: '#f2f2f2',
+          fillOpacity: 1.0
+        }),
+        onEachFeature: (feature, layer) => {
+          const props = feature.properties || {};
+          const name = props.area_name;  // shapefile 中的行政区字段名
 
+          if (name) {
+            const b = layer.getBounds();
+            if (areaBoundsMap[name]) {
+              areaBoundsMap[name] = areaBoundsMap[name].extend(b);
+              areaLayerMap[name].push(layer);
+            } else {
+              areaBoundsMap[name] = b;
+              areaLayerMap[name] = [layer];
+            }
+          }
+        }
+      }).addTo(map);
+
+      cityBounds = beijingLayer.getBounds();
+      map.fitBounds(cityBounds, { padding: [30, 30] });
+
+      // 可选：限制默认 zoom 不要太大
+      const targetZoom = 10;
+      if (map.getZoom() > targetZoom) {
+        map.setZoom(targetZoom);
+      }
+
+      // 2) 加载站点数据
+      stationData = stationJson;
       if (!stationData || stationData.length === 0) {
-        console.error('station_probs.json 为空或格式不正确');
+        console.error('station_probs.json is empty or invalid');
         return;
       }
 
-      // 从第一行推断字段名
       const first = stationData[0];
       const allKeys = Object.keys(first);
-
-      // 基本字段（后续过滤时保留），其余视为不同情景
       const baseKeys = ['station_id', 'lon', 'lat', 'charge_type', 'area_name', 'reg_category'];
-
       scenarioKeys = allKeys.filter(k => !baseKeys.includes(k));
 
-      // 初始化情景下拉框
-      const scenarioSelect = document.getElementById('scenario-select');
-      scenarioKeys.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s;
-        opt.textContent = s;  // 保留你在 CSV/JSON 中用的情景名称，如 "Policy 1.1"
-        scenarioSelect.appendChild(opt);
+      // ===== 构建 Policy 按钮组 =====
+      const policyButtonsContainer = document.getElementById('policy-buttons');
+      scenarioKeys.forEach((key, idx) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'policy-button';
+        btn.dataset.key = key;
+        btn.textContent = scenarioLabelMap[key] || key;
+
+        btn.addEventListener('click', () => {
+          // 更新当前 policy
+          currentScenario = key;
+          // 更新按钮样式
+          Array.from(policyButtonsContainer.children).forEach(b => {
+            b.classList.toggle('active', b.dataset.key === key);
+          });
+          // 只重画，不改视野
+          updateMarkers(false);
+        });
+
+        policyButtonsContainer.appendChild(btn);
+
+        // 默认选中第一个
+        if (idx === 0) {
+          currentScenario = key;
+          btn.classList.add('active');
+        }
       });
 
-      // 初始化区域下拉框
+      // ===== District 下拉框（多选） =====
       const zoneSelect = document.getElementById('zone-filter');
       stationData.forEach(d => {
         if (d.area_name) {
@@ -170,25 +440,36 @@
         opt.textContent = z;
         zoneSelect.appendChild(opt);
       });
+      // 默认保持 "all" 选中，其余不选
 
-      // 根据所有站点坐标自动缩放视图
-      const latlngs = stationData
-        .map(d => [parseFloat(d.lat), parseFloat(d.lon)])
-        .filter(v => !isNaN(v[0]) && !isNaN(v[1]));
-      if (latlngs.length > 0) {
-        const bounds = L.latLngBounds(latlngs);
-        map.fitBounds(bounds, { padding: [20, 20] });
-      }
+      // 事件绑定
+      // 1) District：处理 "all" 逻辑 + 重画 + 缩放视图
+      zoneSelect.addEventListener('change', () => {
+        const selectedValues = Array.from(zoneSelect.selectedOptions).map(o => o.value);
 
-      // 绑定事件
-      scenarioSelect.addEventListener('change', updateMarkers);
-      zoneSelect.addEventListener('change', updateMarkers);
+        if (selectedValues.length > 1 && selectedValues.includes('all')) {
+          // 如果已经选了具体区，再选 all，则取消 all
+          Array.from(zoneSelect.options).forEach(o => {
+            if (o.value === 'all') o.selected = false;
+          });
+        } else if (selectedValues.length === 0) {
+          // 如果什么都没选，自动恢复为 all
+          Array.from(zoneSelect.options).forEach(o => {
+            o.selected = (o.value === 'all');
+          });
+        }
 
-      // 初始渲染
-      updateMarkers();
+        updateMarkers(true);  // District 变更时需要重新 fitBounds
+      });
+
+      // 2) 缩放结束时只重算半径，不改视野
+      map.on('zoomend', () => updateMarkers(false));
+
+      // 初次绘制：全市视图，使用默认的第一个 policy
+      updateMarkers(true);
     })
     .catch(err => {
-      console.error('加载 data/station_probs.json 失败:', err);
+      console.error('Failed to load beijing.geojson or station_probs.json:', err);
     });
 </script>
 </body>
