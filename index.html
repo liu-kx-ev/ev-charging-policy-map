@@ -14,7 +14,7 @@
     #map {
       width: 100%;
       height: 100%;
-      background: #e5e5e5; /* 整体背景 */
+      background: #F8F6F1; /* 整体背景 */
     }
     .controls {
       position: absolute;
@@ -24,8 +24,8 @@
       z-index: 1000;
       background: rgba(255, 255, 255, 0.92);
       padding: 8px 12px;
-      border-radius: 6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.14);
       font-size: 12px;
       max-width: 280px;
     }
@@ -72,9 +72,9 @@
       background: #e9e9e9;
     }
     .policy-button.active {
-      border-color: #1f77b4;
-      background: #e1edf7;
-      color: #174a7a;
+      border-color: #2F78B7;
+      background: #E8F0F6;
+      color: #173B5F;
       font-weight: 600;
     }
 
@@ -86,8 +86,8 @@
       z-index: 1000;
       background: rgba(255, 255, 255, 0.92);
       padding: 8px 10px;
-      border-radius: 6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+      border-radius: 4px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.14);
       font-size: 11px;
       line-height: 1.4;
     }
@@ -109,10 +109,10 @@
       border: 1px solid #222;
     }
     .legend-baseline {
-      background: #1f77b4;
+      background: #2F78B7;
     }
     .legend-policy {
-      background: #2e8b57;
+      background: #2F9A80;
     }
     .legend-note {
       margin-top: 2px;
@@ -210,9 +210,9 @@
 
   function colorFromScenario(s) {
     if (s === 'Baseline') {
-      return '#1f77b4';  // 蓝色
+      return '#2F78B7';
     }
-    return '#2e8b57';    // 绿色（所有政策情景）
+    return '#2F9A80';
   }
 
   // ===== 行政区样式控制（高亮选中区域） =====
@@ -220,10 +220,10 @@
     if (!beijingLayer) return;
     beijingLayer.eachLayer(layer => {
       layer.setStyle({
-        color: '#666',        // 默认边线颜色
-        weight: 1,            // 统一线宽
-        fillColor: '#f2f2f2', // 默认填充
-        fillOpacity: 1.0
+        color: '#B7B7B7',
+        weight: 0.7,
+        fillColor: '#F8F6F1',
+        fillOpacity: 0.96
       });
     });
   }
@@ -239,10 +239,10 @@
       layers.forEach(layer => {
         layer.setStyle({
           // 保持与默认相同的线宽，只调颜色和填充
-          color: '#333',        // 边线颜色略深一点
-          weight: 1,            // 线宽不变，避免厚度不一致
-          fillColor: '#e0ecf4', // 高亮填充色
-          fillOpacity: 1.0
+          color: '#7A7A7A',
+          weight: 0.8,
+          fillColor: '#E5E1DA',
+          fillOpacity: 0.96
         });
       });
     });
@@ -292,13 +292,24 @@
 
       const r = radiusFromProb(p, zoom);
       const color = colorFromScenario(scenario);
+      const edgeColor = scenario === 'Baseline' ? '#173B5F' : '#1D5E50';
+
+      const halo = L.circleMarker([lat, lon], {
+        radius: r * Math.sqrt(1.24),
+        weight: 0,
+        color: '#FFFFFF',
+        fillColor: '#FFFFFF',
+        fillOpacity: 0.62,
+        interactive: false
+      });
 
       const marker = L.circleMarker([lat, lon], {
         radius: r,
-        weight: 0.5,
-        color: '#222',
+        weight: 0.7,
+        color: edgeColor,
+        opacity: 0.78,
         fillColor: color,
-        fillOpacity: 0.75
+        fillOpacity: 0.54
       });
 
       const sharePct = (p * 100).toFixed(3);
@@ -316,6 +327,7 @@
       // 点击弹窗
       marker.bindPopup(popupHtml);
 
+      markersLayer.addLayer(halo);
       markersLayer.addLayer(marker);
     });
 
@@ -355,10 +367,10 @@
       // 1) 绘制北京市边界 polygon，并记录各区 bounds + 图层
       beijingLayer = L.geoJSON(beijingGeojson, {
         style: feature => ({
-          color: '#666',
-          weight: 1,
-          fillColor: '#f2f2f2',
-          fillOpacity: 1.0
+          color: '#B7B7B7',
+          weight: 0.7,
+          fillColor: '#F8F6F1',
+          fillOpacity: 0.96
         }),
         onEachFeature: (feature, layer) => {
           const props = feature.properties || {};
@@ -474,4 +486,6 @@
 </script>
 </body>
 </html>
+
+
 
