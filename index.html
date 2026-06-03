@@ -14,7 +14,7 @@
     #map {
       width: 100%;
       height: 100%;
-      background: #F8F6F1; /* 整体背景 */
+      background: #FFFFFF; /* 整体背景 */
     }
     .controls {
       position: absolute;
@@ -173,6 +173,9 @@
   // ===== 业务数据变量 =====
   let stationData = [];
   let markersLayer = L.layerGroup().addTo(map);
+  let populationLayer = null;
+  let metroLineLayer = null;
+  let metroStationLayer = null;
   let scenarioKeys = [];
   let zones = new Set();
   let currentScenario = null;         // 当前选中的 policy key
@@ -222,8 +225,8 @@
       layer.setStyle({
         color: '#B7B7B7',
         weight: 0.7,
-        fillColor: '#F8F6F1',
-        fillOpacity: 0.96
+        fillColor: '#F2F0EA',
+        fillOpacity: 0.10
       });
     });
   }
@@ -241,8 +244,8 @@
           // 保持与默认相同的线宽，只调颜色和填充
           color: '#7A7A7A',
           weight: 0.8,
-          fillColor: '#E5E1DA',
-          fillOpacity: 0.96
+          fillColor: '#E8E4DC',
+          fillOpacity: 0.10
         });
       });
     });
@@ -359,18 +362,68 @@
   }
 
   // ===== 同时加载北京市边界 + 站点数据 =====
+
+  // ===== Urban context: population density and metro network =====
+  function addPopulationLayer(meta) {
+    if (!meta || !meta.bounds) return;
+    if (populationLayer) {
+      map.removeLayer(populationLayer);
+    }
+    populationLayer = L.imageOverlay('data/population_density.png', meta.bounds, {
+      opacity: meta.opacity || 0.72,
+      interactive: false
+    }).addTo(map);
+  }
+
+  function addMetroContext(metroLinesGeojson, metroStationsGeojson) {
+    if (metroLineLayer) {
+      map.removeLayer(metroLineLayer);
+    }
+    if (metroStationLayer) {
+      map.removeLayer(metroStationLayer);
+    }
+
+    if (metroLinesGeojson) {
+      metroLineLayer = L.geoJSON(metroLinesGeojson, {
+        style: {
+          color: '#8D73B5',
+          weight: 1.0,
+          opacity: 0.48
+        },
+        interactive: false
+      }).addTo(map);
+    }
+
+    if (metroStationsGeojson) {
+      metroStationLayer = L.geoJSON(metroStationsGeojson, {
+        pointToLayer: (feature, latlng) => L.circleMarker(latlng, {
+          radius: 2.0,
+          weight: 0.5,
+          color: '#8D73B5',
+          opacity: 0.52,
+          fillColor: '#FFFFFF',
+          fillOpacity: 0.92,
+          interactive: false
+        })
+      }).addTo(map);
+    }
+  }
+
   Promise.all([
     fetch('data/beijing.geojson').then(r => r.json()),
-    fetch('data/station_probs.json').then(r => r.json())
+    fetch('data/station_probs.json').then(r => r.json()),
+    fetch('data/population_density.json').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('data/metro_lines.geojson').then(r => r.ok ? r.json() : null).catch(() => null),
+    fetch('data/metro_stations.geojson').then(r => r.ok ? r.json() : null).catch(() => null)
   ])
-    .then(([beijingGeojson, stationJson]) => {
+    .then(([beijingGeojson, stationJson, populationMeta, metroLinesGeojson, metroStationsGeojson]) => {
       // 1) 绘制北京市边界 polygon，并记录各区 bounds + 图层
       beijingLayer = L.geoJSON(beijingGeojson, {
         style: feature => ({
           color: '#B7B7B7',
           weight: 0.7,
-          fillColor: '#F8F6F1',
-          fillOpacity: 0.96
+          fillColor: '#F2F0EA',
+          fillOpacity: 0.10
         }),
         onEachFeature: (feature, layer) => {
           const props = feature.properties || {};
@@ -390,6 +443,8 @@
       }).addTo(map);
 
       cityBounds = beijingLayer.getBounds();
+      addPopulationLayer(populationMeta);
+      addMetroContext(metroLinesGeojson, metroStationsGeojson);
       map.fitBounds(cityBounds, { padding: [30, 30] });
 
       // 可选：限制默认 zoom 不要太大
