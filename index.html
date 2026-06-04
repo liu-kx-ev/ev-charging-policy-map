@@ -297,15 +297,6 @@
       const color = colorFromScenario(scenario);
       const edgeColor = scenario === 'Baseline' ? '#173B5F' : '#1D5E50';
 
-      const halo = L.circleMarker([lat, lon], {
-        radius: r * Math.sqrt(1.24),
-        weight: 0,
-        color: '#FFFFFF',
-        fillColor: '#FFFFFF',
-        fillOpacity: 0.62,
-        interactive: false
-      });
-
       const marker = L.circleMarker([lat, lon], {
         radius: r,
         weight: 0.7,
@@ -330,7 +321,6 @@
       // 点击弹窗
       marker.bindPopup(popupHtml);
 
-      markersLayer.addLayer(halo);
       markersLayer.addLayer(marker);
     });
 
