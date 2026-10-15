@@ -1,0 +1,19 @@
+{
+  "updated": "2026-10-15",
+  "events": 3808,
+  "event_alternative_rows": 91963,
+  "stations": 667,
+  "scenarios": [
+    "Baseline",
+    "Policy 1.1",
+    "Policy 1.2",
+    "Policy 2.1",
+    "Policy 2.2",
+    "Policy 3",
+    "Policy 4"
+  ],
+  "measure": "Sum of station-choice probabilities across events, normalized within each scenario; not energy-weighted.",
+  "source_sha256": "5b08b89bb1811517bbce4e6cf89b6136612ef820335709760a935ec382432428",
+  "station_probs_sha256": "6f1e13b75cda4a110ca35cd33ad2ee29b1992dde6fa8b6786d7bfef9d89815b3",
+  "static_context": "Existing station coordinates and auxiliary layers retained; 23 stations outside the current choice sample removed."
+}
